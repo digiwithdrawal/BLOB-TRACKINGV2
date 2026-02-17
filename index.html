@@ -13,19 +13,35 @@
     <video id="vid" autoplay playsinline muted></video>
     <canvas id="screen"></canvas>
 
+    <!-- START OVERLAY: forces user gesture + shows errors -->
+    <div id="startOverlay" class="startOverlay">
+      <div class="startCard">
+        <div class="startTitle">BLOBTRACK CAM V2</div>
+        <div class="startSub">
+          Tap <b>START</b> to request camera access.
+          <div class="startTiny">If nothing happens, read the error below.</div>
+        </div>
+        <button id="startBtn" class="startBtn">START</button>
+        <pre id="errBox" class="errBox"></pre>
+        <div class="startHint">
+          Must be <b>https://</b> in <b>Safari</b> (not an in-app browser).
+        </div>
+      </div>
+    </div>
+
     <header class="top">
       <div class="brand">
         <div class="accent"></div>
         <div class="brandText">
           <div class="brandTitle">BLOBTRACK CAM V2</div>
-          <div class="brandSub">BLOBS • LINES • REC+PHOTO</div>
+          <div class="brandSub">BLOBS • LINES • PHOTO + REC</div>
         </div>
       </div>
       <button id="flip" class="btn glass">FLIP</button>
     </header>
 
-    <!-- floating show hud -->
-    <button id="showHud" class="floatHud" aria-label="Show controls">SHOW HUD</button>
+    <!-- floating show hud (so you can always unhide) -->
+    <button id="showHud" class="floatHud" aria-label="Show HUD">SHOW HUD</button>
 
     <section class="panel" id="panel">
       <div class="row tight">
@@ -40,7 +56,7 @@
         </div>
 
         <div class="pill">
-          <div class="pillLabel">Color</div>
+          <div class="pillLabel">Ink</div>
           <select id="ink">
             <option value="white" selected>WHITE</option>
             <option value="ice">LIGHT BLUE</option>
@@ -56,21 +72,20 @@
         <label class="tog"><input type="checkbox" id="t_blobs" checked><span>Blobs</span></label>
         <label class="tog"><input type="checkbox" id="t_bloom" checked><span>Bloom</span></label>
         <label class="tog"><input type="checkbox" id="t_ps2" checked><span>PS2 Haze</span></label>
-        <label class="tog wide"><input type="checkbox" id="t_gate"><span>Face/Person Gate</span></label>
       </div>
 
       <div class="sliders">
         <div class="srow">
           <div class="slabel">AMOUNT</div>
-          <input id="s_amount" type="range" min="10" max="220" value="110">
+          <input id="s_amount" type="range" min="10" max="240" value="120">
         </div>
         <div class="srow">
           <div class="slabel">SENS</div>
           <input id="s_sens" type="range" min="0" max="100" value="45">
         </div>
         <div class="srow">
-          <div class="slabel">LINES</div>
-          <input id="s_link" type="range" min="10" max="240" value="120">
+          <div class="slabel">LINK</div>
+          <input id="s_link" type="range" min="10" max="260" value="130">
         </div>
         <div class="srow">
           <div class="slabel">BLOOM</div>
@@ -78,7 +93,7 @@
         </div>
         <div class="srow">
           <div class="slabel">RES</div>
-          <input id="s_res" type="range" min="220" max="1280" value="720">
+          <input id="s_res" type="range" min="240" max="1440" value="900">
         </div>
       </div>
 
@@ -88,10 +103,11 @@
         <button id="hud" class="btn">HIDE HUD</button>
       </div>
 
-      <div class="tip" id="tip">AUTO flips with rotation • REC records the true crop.</div>
+      <div class="tip" id="tip">Tap START first.</div>
     </section>
   </main>
 
+  <!-- IMPORTANT: this must match your actual filename -->
   <script src="app.js"></script>
 </body>
 </html>
