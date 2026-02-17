@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>BlobTrack Cam V2</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <div class="title">BLOBTRACK CAM V2</div>
+        <div class="sub">BLOBS • TRACK • BLOOM • VIDEO</div>
+      </div>
+    </div>
+    <div class="topBtns">
+      <button id="flip" class="btn">Flip</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <video id="v" autoplay playsinline muted></video>
+    <canvas id="c"></canvas>
+
+    <div class="hud">
+      <div class="row">
+        <button id="rec" class="btn primary">REC</button>
+        <button id="snap" class="btn">SNAP</button>
+        <button id="reset" class="btn">Reset</button>
+      </div>
+
+      <div class="panel">
+        <div class="row tight">
+          <label class="tog"><input id="t_boxes" type="checkbox" checked /><span>Boxes</span></label>
+          <label class="tog"><input id="t_coords" type="checkbox" checked /><span>Coords</span></label>
+          <label class="tog"><input id="t_lines" type="checkbox" checked /><span>Lines</span></label>
+          <label class="tog"><input id="t_trails" type="checkbox" /><span>Trails</span></label>
+        </div>
+
+        <div class="row tight">
+          <label class="tog"><input id="t_bloom" type="checkbox" checked /><span>Bloom</span></label>
+          <label class="tog"><input id="t_face" type="checkbox" /><span>Face Gate</span></label>
+        </div>
+
+        <div class="row tight">
+          <div class="pill">
+            <div class="pillLabel">Color</div>
+            <select id="color">
+              <option value="white" selected>White</option>
+              <option value="blue">Light Blue</option>
+              <option value="green">Neon Green</option>
+              <option value="red">Red</option>
+              <option value="yellow">Yellow</option>
+            </select>
+          </div>
+
+          <div class="pill">
+            <div class="pillLabel">Format</div>
+            <select id="format">
+              <option value="portrait" selected>Portrait</option>
+              <option value="landscape">Landscape</option>
+              <option value="square">Square</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sliders">
+          <div class="srow">
+            <div class="slabel">Amount</div>
+            <input id="amount" type="range" min="0" max="100" value="65" />
+          </div>
+          <div class="srow">
+            <div class="slabel">Threshold</div>
+            <input id="thresh" type="range" min="0" max="100" value="55" />
+          </div>
+          <div class="srow">
+            <div class="slabel">Scale</div>
+            <input id="scale" type="range" min="160" max="540" value="260" />
+          </div>
+          <div class="srow">
+            <div class="slabel">Bloom</div>
+            <input id="bloom" type="range" min="0" max="100" value="35" />
+          </div>
+        </div>
+
+        <div class="tip" id="tip">
+          Format changes the actual render (snap/rec match). Face Gate uses FaceDetector when available.
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
