@@ -13,38 +13,33 @@
     <video id="vid" autoplay playsinline muted></video>
     <canvas id="screen"></canvas>
 
-    <!-- START OVERLAY: forces user gesture + shows errors -->
+    <!-- START overlay (iOS permission works best from a tap) -->
     <div id="startOverlay" class="startOverlay">
       <div class="startCard">
         <div class="startTitle">BLOBTRACK CAM V2</div>
-        <div class="startSub">
-          Tap <b>START</b> to request camera access.
-          <div class="startTiny">If nothing happens, read the error below.</div>
-        </div>
-        <button id="startBtn" class="startBtn">START</button>
+        <div class="startSub">Tap START to request camera access.</div>
+        <button id="startBtn" class="btn primary full">START</button>
         <pre id="errBox" class="errBox"></pre>
-        <div class="startHint">
-          Must be <b>https://</b> in <b>Safari</b> (not an in-app browser).
-        </div>
+        <div class="startHint">Must be <b>https://</b> in Safari.</div>
       </div>
     </div>
 
     <header class="top">
       <div class="brand">
-        <div class="accent"></div>
-        <div class="brandText">
-          <div class="brandTitle">BLOBTRACK CAM V2</div>
-          <div class="brandSub">BLOBS • LINES • PHOTO + REC</div>
+        <div class="dot"></div>
+        <div class="txt">
+          <div class="t1">BLOBTRACK CAM V2</div>
+          <div class="t2">TOUCHDESIGNER HUD • PHOTO + REC</div>
         </div>
       </div>
       <button id="flip" class="btn glass">FLIP</button>
     </header>
 
-    <!-- floating show hud (so you can always unhide) -->
-    <button id="showHud" class="floatHud" aria-label="Show HUD">SHOW HUD</button>
+    <!-- always-recover HUD -->
+    <button id="showHud" class="floatHud">SHOW HUD</button>
 
     <section class="panel" id="panel">
-      <div class="row tight">
+      <div class="row">
         <div class="pill">
           <div class="pillLabel">Format</div>
           <select id="format">
@@ -56,45 +51,36 @@
         </div>
 
         <div class="pill">
-          <div class="pillLabel">Ink</div>
+          <div class="pillLabel">Overlay</div>
           <select id="ink">
             <option value="white" selected>WHITE</option>
-            <option value="ice">LIGHT BLUE</option>
             <option value="neon">NEON GREEN</option>
+            <option value="ice">LIGHT BLUE</option>
             <option value="red">RED</option>
-            <option value="yellow">YELLOW</option>
           </select>
         </div>
       </div>
 
-      <div class="togGrid">
-        <label class="tog"><input type="checkbox" id="t_lines" checked><span>Lines</span></label>
-        <label class="tog"><input type="checkbox" id="t_blobs" checked><span>Blobs</span></label>
-        <label class="tog"><input type="checkbox" id="t_bloom" checked><span>Bloom</span></label>
-        <label class="tog"><input type="checkbox" id="t_ps2" checked><span>PS2 Haze</span></label>
+      <div class="row">
+        <div class="pill wide">
+          <div class="pillLabel">Gate</div>
+          <select id="gate">
+            <option value="off" selected>OFF</option>
+            <option value="face">FACE</option>
+            <option value="person">PERSON</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="togRow">
+        <label class="tog"><input id="t_matrix" type="checkbox" checked><span>MATRIX</span></label>
       </div>
 
       <div class="sliders">
-        <div class="srow">
-          <div class="slabel">AMOUNT</div>
-          <input id="s_amount" type="range" min="10" max="240" value="120">
-        </div>
-        <div class="srow">
-          <div class="slabel">SENS</div>
-          <input id="s_sens" type="range" min="0" max="100" value="45">
-        </div>
-        <div class="srow">
-          <div class="slabel">LINK</div>
-          <input id="s_link" type="range" min="10" max="260" value="130">
-        </div>
-        <div class="srow">
-          <div class="slabel">BLOOM</div>
-          <input id="s_bloom" type="range" min="0" max="100" value="55">
-        </div>
-        <div class="srow">
-          <div class="slabel">RES</div>
-          <input id="s_res" type="range" min="240" max="1440" value="900">
-        </div>
+        <div class="srow"><div class="slabel">AMOUNT</div><input id="s_amount" type="range" min="10" max="260" value="120"></div>
+        <div class="srow"><div class="slabel">ATMOS</div><input id="s_atmo" type="range" min="0" max="100" value="55"></div>
+        <div class="srow"><div class="slabel">FX</div><input id="s_fx" type="range" min="0" max="100" value="60"></div>
+        <div class="srow"><div class="slabel">RES</div><input id="s_res" type="range" min="240" max="1440" value="900"></div>
       </div>
 
       <div class="actions">
@@ -103,11 +89,10 @@
         <button id="hud" class="btn">HIDE HUD</button>
       </div>
 
-      <div class="tip" id="tip">Tap START first.</div>
+      <div class="tip" id="tip">Auto format follows rotation. Manual overrides.</div>
     </section>
   </main>
 
-  <!-- IMPORTANT: this must match your actual filename -->
   <script src="app.js"></script>
 </body>
 </html>
