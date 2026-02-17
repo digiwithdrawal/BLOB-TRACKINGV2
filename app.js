@@ -1,544 +1,450 @@
-// BlobTrack Cam V2
-// - TouchDesigner-ish blob tracking overlay
-// - Overlay color selector
-// - Portrait/Landscape/Square format render (snap/rec matches)
-// - Bloom toggle + strength
-// - Face Gate toggle (FaceDetector if available)
-// - Video record (canvas capture) when supported
+const video = document.getElementById('vid');
 
-const video = document.getElementById('v');
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d', { willReadFrequently: true });
+// viewport display canvas (letterboxed)
+const screen = document.getElementById('screen');
+const sctx = screen.getContext('2d', { willReadFrequently: true });
+
+// true output frame (cropped to chosen aspect)
+const frame = document.createElement('canvas');
+const fctx = frame.getContext('2d', { willReadFrequently: true });
+
+// analysis buffer (small) for motion/blob picking
+const ana = document.createElement('canvas');
+const actx = ana.getContext('2d', { willReadFrequently: true });
+
+// previous analysis frame
+let prevAna = null;
+
+const panel = document.getElementById('panel');
+const showHudBtn = document.getElementById('showHud');
 
 const ui = {
-  flip:  document.getElementById('flip'),
-  rec:   document.getElementById('rec'),
-  snap:  document.getElementById('snap'),
-  reset: document.getElementById('reset'),
-  tip:   document.getElementById('tip'),
+  flip: document.getElementById('flip'),
+  snap: document.getElementById('snap'),
+  rec: document.getElementById('rec'),
+  hud: document.getElementById('hud'),
+  tip: document.getElementById('tip'),
 
-  t_boxes:  document.getElementById('t_boxes'),
-  t_coords: document.getElementById('t_coords'),
-  t_lines:  document.getElementById('t_lines'),
-  t_trails: document.getElementById('t_trails'),
-
-  t_bloom:  document.getElementById('t_bloom'),
-  t_face:   document.getElementById('t_face'),
-
-  color:  document.getElementById('color'),
   format: document.getElementById('format'),
+  ink: document.getElementById('ink'),
 
-  amount: document.getElementById('amount'),
-  thresh: document.getElementById('thresh'),
-  scale:  document.getElementById('scale'),
-  bloom:  document.getElementById('bloom'),
+  t_lines: document.getElementById('t_lines'),
+  t_blobs: document.getElementById('t_blobs'),
+  t_bloom: document.getElementById('t_bloom'),
+  t_ps2: document.getElementById('t_ps2'),
+  t_gate: document.getElementById('t_gate'),
+
+  s_amount: document.getElementById('s_amount'),
+  s_sens: document.getElementById('s_sens'),
+  s_link: document.getElementById('s_link'),
+  s_bloom: document.getElementById('s_bloom'),
+  s_res: document.getElementById('s_res'),
 };
 
 let facingMode = "environment";
 let stream = null;
 
-// analysis canvas (low-res) for blob detection
-const a = document.createElement('canvas');
-const actx = a.getContext('2d', { willReadFrequently: true });
-
-// bloom buffer (same size as output)
-const b = document.createElement('canvas');
-const bctx = b.getContext('2d', { willReadFrequently: true });
-
-let prevGray = null;
-
-// trails buffer control
-let trailFade = 0.18; // lower = longer trails
+// HUD state
+let hudHidden = false;
+function setHudHidden(v){
+  hudHidden = !!v;
+  panel.classList.toggle('hidden', hudHidden);
+  showHudBtn.classList.toggle('show', hudHidden);
+  ui.hud.textContent = hudHidden ? "SHOW HUD" : "HIDE HUD";
+}
+setHudHidden(false);
 
 // recording
 let recorder = null;
-let chunks = [];
-let isRec = false;
+let recChunks = [];
+let isRecording = false;
 
-// face gating
+// FaceDetector (optional)
 let faceDetector = null;
-let faceBoxes = [];
-let faceBusy = false;
-let faceFrameCounter = 0;
-let faceSupportChecked = false;
+try {
+  if ('FaceDetector' in window) faceDetector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+} catch (_) {
+  faceDetector = null;
+}
+let gateLast = false;
+let gateHold = 0; // frames to keep gate true after detection
 
-function clamp01(x){ return Math.max(0, Math.min(1, x)); }
-function setTip(html){ ui.tip.innerHTML = html; }
-function nowStamp(){
-  return new Date().toISOString().replace(/[:.]/g,'-');
+function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+function rand(n=1){ return Math.random()*n; }
+
+function viewportSize(){
+  const vw = Math.floor(window.visualViewport?.width || window.innerWidth);
+  const vh = Math.floor(window.visualViewport?.height || window.innerHeight);
+  return { vw, vh };
+}
+function deviceIsLandscape(){
+  const { vw, vh } = viewportSize();
+  return vw > vh;
+}
+function chosenMode(){
+  const m = ui.format.value;
+  if (m === 'auto') return deviceIsLandscape() ? 'landscape' : 'portrait';
+  return m;
+}
+function modeAspect(mode){
+  if (mode === 'square') return 1;
+  if (mode === 'landscape') return 16/9;
+  // portrait-ish clamp
+  const { vw, vh } = viewportSize();
+  return clamp(vw / vh, 9/19.5, 9/14);
 }
 
-function pickMimeType(){
-  if (!window.MediaRecorder) return '';
-  const opts = [
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm',
-    'video/mp4'
-  ];
-  return opts.find(t => MediaRecorder.isTypeSupported(t)) || '';
+// Resize pipeline: screen = viewport, frame = chosen aspect at RES
+function resizeAll(){
+  const { vw, vh } = viewportSize();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+  screen.width = Math.floor(vw * dpr);
+  screen.height = Math.floor(vh * dpr);
+
+  const res = parseInt(ui.s_res.value, 10); // short side target
+  const mode = chosenMode();
+  const ar = modeAspect(mode);
+
+  let fw, fh;
+  if (ar >= 1) { fh = res; fw = Math.round(res * ar); }
+  else { fw = res; fh = Math.round(res / ar); }
+
+  frame.width = fw;
+  frame.height = fh;
+
+  // analysis buffer fixed small (faster)
+  ana.width = 180;
+  ana.height = Math.round(180 * (fh / fw));
+  prevAna = null;
+
+  ui.tip.innerHTML = `Mode: <b>${mode.toUpperCase()}</b> • Output: <b>${frame.width}×${frame.height}</b> • ${faceDetector ? "Gate supports FaceDetector" : "Gate: limited (no FaceDetector)"}`;
 }
 
-/* ---------------- Format Rendering ---------------- */
-
-function drawCover(targetCtx, dx, dy, dW, dH){
+// Draw camera cropped to W/H (no stretch)
+function drawVideoCoverTo(ctx, W, H){
   const vw = video.videoWidth || 1280;
   const vh = video.videoHeight || 720;
-
-  const srcAspect = vw / vh;
-  const dstAspect = dW / dH;
+  const srcA = vw / vh;
+  const dstA = W / H;
 
   let sx=0, sy=0, sW=vw, sH=vh;
-  if (srcAspect > dstAspect){
+  if (srcA > dstA){
     sH = vh;
-    sW = vh * dstAspect;
+    sW = vh * dstA;
     sx = (vw - sW) / 2;
   } else {
     sW = vw;
-    sH = vw / dstAspect;
+    sH = vw / dstA;
     sy = (vh - sH) / 2;
   }
-
-  targetCtx.drawImage(video, sx, sy, sW, sH, dx, dy, dW, dH);
+  ctx.drawImage(video, sx, sy, sW, sH, 0, 0, W, H);
 }
 
-function drawFormatted(targetCtx, W, H, format){
-  targetCtx.save();
-  targetCtx.setTransform(1,0,0,1,0,0);
-  targetCtx.clearRect(0,0,W,H);
-
-  if (format === 'portrait'){
-    drawCover(targetCtx, 0, 0, W, H);
-  } else if (format === 'square'){
-    drawCover(targetCtx, 0, 0, W, H);
-  } else {
-    // landscape: rotate output 90deg so it truly becomes landscape render
-    targetCtx.translate(W/2, H/2);
-    targetCtx.rotate(Math.PI/2);
-    // rotated space uses swapped dims (H, W)
-    drawCover(targetCtx, -H/2, -W/2, H, W);
+// Ink colors
+function inkRGBA(){
+  switch(ui.ink.value){
+    case "ice":   return "rgba(160,220,255,0.95)";
+    case "neon":  return "rgba(80,255,140,0.95)";
+    case "red":   return "rgba(255,70,70,0.95)";
+    case "yellow":return "rgba(255,230,80,0.95)";
+    case "white":
+    default:      return "rgba(255,255,255,0.95)";
   }
-
-  targetCtx.restore();
 }
 
-function desiredOutputSize(){
-  const base = parseInt(ui.scale.value, 10);
-  const format = ui.format.value;
+// PS2 haze: blue haze + contrast + soft bloom-ish veil
+function applyPS2Haze(){
+  const W = frame.width, H = frame.height;
 
-  const outW = base * 2;
-  let outH;
-
-  if (format === 'square'){
-    outH = outW;
-  } else if (format === 'landscape'){
-    outH = Math.max(200, Math.round(outW * 0.5625)); // ~16:9
-  } else {
-    // portrait: use camera aspect for best matching
-    const aspect = (video.videoHeight / video.videoWidth) || (16/9);
-    outH = Math.max(200, Math.round(outW * aspect));
-  }
-
-  return { outW, outH };
-}
-
-function resizePipes(){
-  const { outW, outH } = desiredOutputSize();
-
-  canvas.width = outW;
-  canvas.height = outH;
-
-  // analysis canvas lower res for speed
-  a.width = parseInt(ui.scale.value, 10);
-  a.height = Math.max(120, Math.round((canvas.height / canvas.width) * a.width));
-
-  // bloom buffer
-  b.width = canvas.width;
-  b.height = canvas.height;
-
-  prevGray = new Float32Array(a.width * a.height);
-
-  // reset faces (since coords mapping changed)
-  faceBoxes = [];
-}
-
-/* ---------------- Overlay Color ---------------- */
-
-function overlayColor(){
-  const c = ui.color.value;
-  if (c === 'white')  return { stroke:'rgba(255,255,255,0.92)', fill:'rgba(255,255,255,0.96)' };
-  if (c === 'blue')   return { stroke:'rgba(116,247,255,0.88)', fill:'rgba(116,247,255,0.95)' };
-  if (c === 'green')  return { stroke:'rgba(70,255,90,0.88)',   fill:'rgba(70,255,90,0.95)' };
-  if (c === 'red')    return { stroke:'rgba(255,60,60,0.88)',   fill:'rgba(255,60,60,0.95)' };
-  return              { stroke:'rgba(255,230,80,0.88)',  fill:'rgba(255,230,80,0.95)' }; // yellow
-}
-
-/* ---------------- Blob Detection ---------------- */
-
-function grayFromRGBA(r,g,b){
-  return (0.2126*r + 0.7152*g + 0.0722*b) / 255;
-}
-
-function detectBlobs(){
-  const w = a.width, h = a.height;
-  const format = ui.format.value;
-
-  drawFormatted(actx, w, h, format);
-  const img = actx.getImageData(0,0,w,h);
+  // 1) contrast bump (cheap per-frame)
+  const img = fctx.getImageData(0,0,W,H);
   const d = img.data;
+  const c = 1.18; // contrast
+  const b = 6;    // brightness
+  for (let i=0; i<d.length; i+=4){
+    d[i]   = clamp((d[i]-128)*c + 128 + b, 0, 255);
+    d[i+1] = clamp((d[i+1]-128)*c + 128 + b, 0, 255);
+    d[i+2] = clamp((d[i+2]-128)*c + 128 + b, 0, 255);
+  }
+  fctx.putImageData(img,0,0);
 
-  const amount = parseInt(ui.amount.value,10) / 100; // 0..1
-  const thresh = parseInt(ui.thresh.value,10) / 100; // 0..1
+  // 2) blue haze overlay (screen)
+  fctx.save();
+  fctx.globalCompositeOperation = "screen";
+  fctx.globalAlpha = 0.20;
+  fctx.fillStyle = "rgb(40,120,255)";
+  fctx.fillRect(0,0,W,H);
+  fctx.restore();
 
-  const maxBlobs = Math.floor(5 + amount * 85);       // 5..90
-  const motionMix = 0.25 + amount * 0.65;             // 0.25..0.90
-  const cell = Math.max(2, Math.floor(6 - amount * 4));// 6..2
-  const radius = 10 + amount * 28;                    // cluster radius
-  const r2 = radius * radius;
+  // 3) subtle vignette for PS2 vibe
+  fctx.save();
+  const g = fctx.createRadialGradient(W*0.5,H*0.55, Math.min(W,H)*0.2, W*0.5,H*0.55, Math.max(W,H)*0.75);
+  g.addColorStop(0, "rgba(0,0,0,0)");
+  g.addColorStop(1, "rgba(0,0,0,0.28)");
+  fctx.globalAlpha = 1;
+  fctx.fillStyle = g;
+  fctx.fillRect(0,0,W,H);
+  fctx.restore();
+}
 
-  // Gather hot points (sampled by grid)
-  const hot = [];
-  let idx = 0;
+// Bloom: blurred additive copy of current frame
+function applyBloom(strength01){
+  const W = frame.width, H = frame.height;
+  const blurPx = 6 + strength01 * 18;
 
-  for (let y=0; y<h; y++){
-    for (let x=0; x<w; x++){
-      const i = idx * 4;
-      const g = grayFromRGBA(d[i], d[i+1], d[i+2]);
-      const m = Math.abs(g - prevGray[idx]);
-      prevGray[idx] = g;
+  fctx.save();
+  fctx.globalCompositeOperation = "screen";
+  fctx.globalAlpha = 0.18 + strength01 * 0.42;
+  fctx.filter = `blur(${blurPx}px)`;
+  fctx.drawImage(frame, 0, 0);
+  fctx.filter = "none";
+  fctx.restore();
+}
 
-      // combine brightness+motion
-      const score = g*(1-motionMix) + m*motionMix;
+// Motion-based blob picking: downsample frame, diff vs prev, pick top points
+function computeBlobPoints(){
+  // draw frame -> ana
+  actx.setTransform(1,0,0,1,0,0);
+  actx.imageSmoothingEnabled = true;
+  actx.drawImage(frame, 0, 0, ana.width, ana.height);
 
-      if (score > thresh && (x % cell === 0) && (y % cell === 0)){
-        hot.push({ x, y, s: score });
+  const cur = actx.getImageData(0,0,ana.width, ana.height);
+  const d = cur.data;
+
+  if (!prevAna){
+    prevAna = cur;
+    return [];
+  }
+
+  const pd = prevAna.data;
+  const sens = parseInt(ui.s_sens.value,10) / 100;      // 0..1
+  const thr = 18 + (1 - sens) * 36;                     // lower thr = more points
+  const amount = parseInt(ui.s_amount.value,10);
+
+  // sample grid (fast)
+  const step = 2; // analysis step
+  const hits = [];
+
+  for (let y=0; y<ana.height; y+=step){
+    for (let x=0; x<ana.width; x+=step){
+      const i = (y*ana.width + x)*4;
+
+      const lum  = 0.2126*d[i] + 0.7152*d[i+1] + 0.0722*d[i+2];
+      const plum = 0.2126*pd[i] + 0.7152*pd[i+1] + 0.0722*pd[i+2];
+
+      const diff = Math.abs(lum - plum);
+      if (diff > thr){
+        // weight by diff
+        hits.push({ x, y, w: diff });
       }
-      idx++;
     }
   }
 
-  hot.sort((A,B) => B.s - A.s);
+  // update prev
+  prevAna = cur;
 
-  // Cheap clustering into blobs
-  const blobs = [];
-  for (let k=0; k<hot.length && blobs.length < maxBlobs; k++){
-    const p = hot[k];
+  if (hits.length === 0) return [];
 
-    let found = -1;
-    for (let bi=0; bi<blobs.length; bi++){
-      const b = blobs[bi];
-      const dx = p.x - b.cx;
-      const dy = p.y - b.cy;
-      if (dx*dx + dy*dy < r2){ found = bi; break; }
+  // pick strongest N, but keep spread by simple thinning
+  hits.sort((a,b)=> b.w - a.w);
+
+  const maxN = Math.min(amount, 240);
+  const chosen = [];
+  const minDist = 4; // in ana pixels
+
+  for (let i=0; i<hits.length && chosen.length<maxN; i++){
+    const p = hits[i];
+    let ok = true;
+    for (let j=0; j<chosen.length; j++){
+      const q = chosen[j];
+      const dx = p.x - q.x, dy = p.y - q.y;
+      if (dx*dx + dy*dy < minDist*minDist){ ok = false; break; }
     }
+    if (ok) chosen.push(p);
+  }
 
-    if (found === -1){
-      blobs.push({ minx:p.x, miny:p.y, maxx:p.x, maxy:p.y, cx:p.x, cy:p.y, s:p.s, n:1 });
+  // map to frame coords
+  const sx = frame.width / ana.width;
+  const sy = frame.height / ana.height;
+
+  return chosen.map(p => ({
+    x: p.x * sx,
+    y: p.y * sy,
+    w: p.w
+  }));
+}
+
+function drawBlobsAndLines(points){
+  const W = frame.width, H = frame.height;
+  const ink = inkRGBA();
+
+  const showBlobs = ui.t_blobs.checked;
+  const showLines = ui.t_lines.checked;
+
+  // line distance threshold
+  const link = parseInt(ui.s_link.value,10);
+  const link2 = link * link;
+
+  fctx.save();
+  fctx.lineCap = "round";
+  fctx.lineJoin = "round";
+  fctx.strokeStyle = ink;
+  fctx.fillStyle = ink;
+
+  // mild glow
+  fctx.shadowColor = ink.replace("0.95", "0.75");
+  fctx.shadowBlur = 10;
+
+  if (showLines){
+    fctx.globalAlpha = 0.75;
+    for (let i=0; i<points.length; i++){
+      const a = points[i];
+      for (let j=i+1; j<points.length; j++){
+        const b = points[j];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < link2){
+          const t = 1 - (d2 / link2);
+          fctx.globalAlpha = 0.15 + t*0.65;
+          fctx.lineWidth = 1 + t*2.2;
+          fctx.beginPath();
+          fctx.moveTo(a.x, a.y);
+          fctx.lineTo(b.x, b.y);
+          fctx.stroke();
+        }
+      }
+    }
+  }
+
+  if (showBlobs){
+    fctx.globalAlpha = 0.95;
+    for (let i=0; i<points.length; i++){
+      const p = points[i];
+      const r = 1.8 + clamp(p.w/40, 0, 6.0);
+      fctx.beginPath();
+      fctx.arc(p.x, p.y, r, 0, Math.PI*2);
+      fctx.fill();
+    }
+  }
+
+  fctx.restore();
+}
+
+// letterboxed contain draw frame -> screen
+function drawFrameToScreen(){
+  const SW = screen.width, SH = screen.height;
+  const FW = frame.width, FH = frame.height;
+
+  const scale = Math.min(SW / FW, SH / FH);
+  const dw = Math.round(FW * scale);
+  const dh = Math.round(FH * scale);
+  const dx = Math.floor((SW - dw) / 2);
+  const dy = Math.floor((SH - dh) / 2);
+
+  sctx.save();
+  sctx.setTransform(1,0,0,1,0,0);
+  sctx.imageSmoothingEnabled = false;
+  sctx.fillStyle = "#000";
+  sctx.fillRect(0,0,SW,SH);
+  sctx.drawImage(frame, 0,0,FW,FH, dx,dy,dw,dh);
+  sctx.restore();
+}
+
+// Face/person gate (optional)
+async function updateGate(){
+  if (!ui.t_gate.checked) {
+    gateLast = true;
+    gateHold = 0;
+    return;
+  }
+
+  if (!faceDetector){
+    // No FaceDetector support: treat as always-on (or you can flip to always-off)
+    gateLast = true;
+    return;
+  }
+
+  // run detector at low frequency
+  if (gateHold > 0){
+    gateHold--;
+    gateLast = true;
+    return;
+  }
+
+  try{
+    const faces = await faceDetector.detect(frame);
+    if (faces && faces.length){
+      gateLast = true;
+      gateHold = 12; // keep on for a short time
     } else {
-      const b = blobs[found];
-      b.minx = Math.min(b.minx, p.x); b.miny = Math.min(b.miny, p.y);
-      b.maxx = Math.max(b.maxx, p.x); b.maxy = Math.max(b.maxy, p.y);
-      b.cx = (b.cx*b.n + p.x) / (b.n+1);
-      b.cy = (b.cy*b.n + p.y) / (b.n+1);
-      b.s = Math.max(b.s, p.s);
-      b.n++;
+      gateLast = false;
     }
+  }catch(_){
+    gateLast = true; // fail open
   }
-
-  // Rank by cluster size + strength
-  blobs.sort((A,B) => (B.n + B.s*10) - (A.n + A.s*10));
-  return blobs.slice(0, maxBlobs);
 }
 
-/* ---------------- Face Gate (optional) ---------------- */
+// SNAP photo (true frame)
+function snapPhoto(){
+  const a = document.createElement('a');
+  a.download = `blobtrack_v2_${new Date().toISOString().replace(/[:.]/g,'-')}.png`;
+  a.href = frame.toDataURL('image/png');
+  a.click();
+}
 
-function initFaceDetectorOnce(){
-  if (faceSupportChecked) return;
-  faceSupportChecked = true;
-
-  if (!('FaceDetector' in window)){
-    faceDetector = null;
-    setTip("Face Gate: not supported on this browser (FaceDetector missing).");
+// recording from screen? we want true frame: capture from frame via a dedicated output canvas stream
+// easiest: capture from screen (already contains frame). BUT that includes letterbox.
+// So: create a recorder canvas same size as frame and draw frame into it each tick (we already have frame).
+// Use frame.captureStream().
+function startRecording(){
+  if (!('MediaRecorder' in window)){
+    ui.tip.innerHTML = "MediaRecorder not supported in this browser.";
     return;
   }
-
   try{
-    faceDetector = new FaceDetector({ fastMode: true, maxDetectedFaces: 3 });
-    setTip("Face Gate ready. Turn it on to only show blobs when a face is detected.");
-  }catch(e){
-    faceDetector = null;
-    setTip("Face Gate unavailable on this browser build.");
-  }
-}
-
-async function updateFacesThrottled(){
-  if (!ui.t_face.checked) return;
-  initFaceDetectorOnce();
-  if (!faceDetector) return;
-
-  // throttle: every 10 frames
-  faceFrameCounter++;
-  if (faceFrameCounter % 10 !== 0) return;
-  if (faceBusy) return;
-
-  faceBusy = true;
-  try{
-    // ensure analysis canvas has latest formatted frame
-    drawFormatted(actx, a.width, a.height, ui.format.value);
-    const faces = await faceDetector.detect(a);
-    faceBoxes = faces.map(f => f.boundingBox);
-  }catch(e){
-    faceBoxes = [];
-  } finally {
-    faceBusy = false;
-  }
-}
-
-function passFaceGate(){
-  if (!ui.t_face.checked) return true;
-  if (!faceDetector) return true; // graceful: still show blobs
-  return faceBoxes.length > 0;
-}
-
-/* ---------------- Bloom ---------------- */
-
-function applyBloom(){
-  if (!ui.t_bloom.checked) return;
-
-  const strength = parseInt(ui.bloom.value,10) / 100; // 0..1
-  if (strength <= 0.01) return;
-
-  // copy current output into bloom buffer
-  bctx.setTransform(1,0,0,1,0,0);
-  bctx.clearRect(0,0,b.width,b.height);
-  bctx.drawImage(canvas, 0, 0);
-
-  // screen blend blurred buffer back onto output
-  const blurA = 4 + strength * 16;
-  const blurB = Math.max(2, blurA * 0.55);
-
-  ctx.save();
-  ctx.globalCompositeOperation = 'screen';
-
-  ctx.globalAlpha = 0.55 * strength;
-  ctx.filter = `blur(${blurA}px)`;
-  ctx.drawImage(b, 0, 0);
-
-  ctx.globalAlpha = 0.25 * strength;
-  ctx.filter = `blur(${blurB}px)`;
-  ctx.drawImage(b, 0, 0);
-
-  ctx.restore();
-}
-
-/* ---------------- Draw Overlay ---------------- */
-
-function drawOverlay(blobs){
-  const W = canvas.width, H = canvas.height;
-  const w = a.width, h = a.height;
-  const format = ui.format.value;
-  const col = overlayColor();
-
-  // base frame
-  if (!ui.t_trails.checked){
-    drawFormatted(ctx, W, H, format);
-  } else {
-    ctx.save();
-    ctx.globalAlpha = trailFade;
-    ctx.fillStyle = 'rgba(0,0,0,1)';
-    ctx.fillRect(0,0,W,H);
-    ctx.restore();
-    drawFormatted(ctx, W, H, format);
-  }
-
-  // face gating
-  if (!passFaceGate()){
-    applyBloom();
-    return;
-  }
-
-  ctx.save();
-  ctx.imageSmoothingEnabled = false;
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = col.stroke;
-  ctx.fillStyle = col.fill;
-  ctx.font = '700 14px ui-monospace, Menlo, Monaco, Consolas, monospace';
-
-  // connecting lines
-  if (ui.t_lines.checked && blobs.length > 1){
-    ctx.beginPath();
-    for (let i=0; i<blobs.length; i++){
-      const b = blobs[i];
-      const x = (b.cx / w) * W;
-      const y = (b.cy / h) * H;
-      if (i === 0) ctx.moveTo(x,y);
-      else ctx.lineTo(x,y);
-    }
-    ctx.stroke();
-  }
-
-  // boxes + coords + crosshair
-  for (let i=0; i<blobs.length; i++){
-    const b = blobs[i];
-
-    const x0 = (b.minx / w) * W;
-    const y0 = (b.miny / h) * H;
-    const x1 = (b.maxx / w) * W;
-    const y1 = (b.maxy / h) * H;
-
-    const cx = (b.cx / w) * W;
-    const cy = (b.cy / h) * H;
-
-    const pad = 8;
-    const bx0 = x0 - pad, by0 = y0 - pad, bw = (x1-x0) + pad*2, bh = (y1-y0) + pad*2;
-
-    if (ui.t_boxes.checked){
-      ctx.strokeRect(bx0, by0, bw, bh);
-    }
-
-    if (ui.t_coords.checked){
-      const nx = (b.cx / w).toFixed(5);
-      const ny = (b.cy / h).toFixed(5);
-      ctx.fillText(`${nx}, ${ny}`, bx0 + 6, by0 - 6);
-    }
-
-    ctx.beginPath();
-    ctx.moveTo(cx-6, cy); ctx.lineTo(cx+6, cy);
-    ctx.moveTo(cx, cy-6); ctx.lineTo(cx, cy+6);
-    ctx.stroke();
-  }
-
-  // optional face boxes (dashed)
-  if (ui.t_face.checked && faceDetector && faceBoxes.length){
-    ctx.save();
-    ctx.globalAlpha = 0.55;
-    ctx.setLineDash([6,6]);
-    for (const fb of faceBoxes){
-      const fx = (fb.x / w) * W;
-      const fy = (fb.y / h) * H;
-      const fw = (fb.width / w) * W;
-      const fh = (fb.height / h) * H;
-      ctx.strokeRect(fx, fy, fw, fh);
-    }
-    ctx.restore();
-  }
-
-  ctx.restore();
-
-  applyBloom();
-}
-
-/* ---------------- Snap + Record ---------------- */
-
-function snap(){
-  const aTag = document.createElement('a');
-  aTag.download = `blobtrack_v2_${nowStamp()}.png`;
-  aTag.href = canvas.toDataURL('image/png');
-  aTag.click();
-}
-
-async function startRec(){
-  if (!window.MediaRecorder){
-    setTip("REC not supported here. Try desktop Chrome/Edge for guaranteed recording.");
-    return;
-  }
-
-  const mimeType = pickMimeType();
-  if (!mimeType){
-    setTip("REC: no supported video format found on this browser.");
-    return;
-  }
-
-  try{
-    const out = canvas.captureStream(30); // processed output
-    recorder = new MediaRecorder(out, { mimeType });
-    chunks = [];
-
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunks.push(e.data);
-    };
-
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: mimeType });
+    const fps = 30;
+    const stream = frame.captureStream(fps);
+    recorder = new MediaRecorder(stream, { mimeType: pickMimeType() });
+    recChunks = [];
+    recorder.ondataavailable = (e)=> { if (e.data && e.data.size) recChunks.push(e.data); };
+    recorder.onstop = ()=>{
+      const blob = new Blob(recChunks, { type: recorder.mimeType || "video/webm" });
       const url = URL.createObjectURL(blob);
-      const aTag = document.createElement('a');
-      aTag.href = url;
-      aTag.download = `blobtrack_v2_${nowStamp()}.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
-      aTag.click();
-      setTimeout(() => URL.revokeObjectURL(url), 6000);
+      const a = document.createElement('a');
+      a.download = `blobtrack_v2_${new Date().toISOString().replace(/[:.]/g,'-')}.webm`;
+      a.href = url;
+      a.click();
+      setTimeout(()=> URL.revokeObjectURL(url), 2500);
     };
-
-    recorder.start(200);
-    isRec = true;
-    ui.rec.textContent = 'STOP';
-    ui.rec.classList.add('warn');
-    setTip(`Recording… (${mimeType})`);
-  }catch(e){
-    console.error(e);
-    setTip("Recording failed on this device/browser. Live effect still works.");
+    recorder.start();
+    isRecording = true;
+    ui.rec.textContent = "STOP";
+    ui.tip.innerHTML = "Recording… hit STOP to save.";
+  }catch(err){
+    ui.tip.innerHTML = `Recording failed: ${String(err)}`;
   }
 }
 
-function stopRec(){
-  if (!recorder) return;
-  recorder.stop();
-  isRec = false;
-  ui.rec.textContent = 'REC';
-  ui.rec.classList.remove('warn');
-  setTip("Saved recording (if supported).");
-}
-
-/* ---------------- Reset ---------------- */
-
-function resetTracker(){
-  if (prevGray) prevGray.fill(0);
-  faceBoxes = [];
-  setTip("Tracker reset.");
-}
-
-/* ---------------- Main Loop ---------------- */
-
-let lastSizeKey = '';
-
-async function loop(){
-  // resize if scale/format changed (cheap key check)
-  const key = `${ui.scale.value}|${ui.format.value}|${video.videoWidth}x${video.videoHeight}`;
-  if (key !== lastSizeKey){
-    lastSizeKey = key;
-    resizePipes();
-    resetTracker();
+function stopRecording(){
+  if (recorder && isRecording){
+    recorder.stop();
   }
-
-  await updateFacesThrottled();
-
-  const blobs = detectBlobs();
-  drawOverlay(blobs);
-
-  requestAnimationFrame(loop);
+  isRecording = false;
+  ui.rec.textContent = "REC";
 }
 
-/* ---------------- Events ---------------- */
-
-ui.flip.addEventListener('click', async () => {
-  facingMode = (facingMode === "environment") ? "user" : "environment";
-  await startCamera();
-});
-
-ui.snap.addEventListener('click', snap);
-
-ui.reset.addEventListener('click', resetTracker);
-
-ui.rec.addEventListener('click', async () => {
-  if (!isRec) await startRec();
-  else stopRec();
-});
-
-// If Face Gate toggled on, initialize detector check once
-ui.t_face.addEventListener('change', () => {
-  if (ui.t_face.checked) initFaceDetectorOnce();
-});
-
-/* ---------------- Start Camera ---------------- */
+function pickMimeType(){
+  const opts = [
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm"
+  ];
+  for (const t of opts){
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
+}
 
 async function startCamera(){
   if (stream) stream.getTracks().forEach(t => t.stop());
@@ -551,14 +457,87 @@ async function startCamera(){
   video.srcObject = stream;
   await new Promise(res => video.onloadedmetadata = res);
 
-  lastSizeKey = '';
-  resizePipes();
+  resizeAll();
   requestAnimationFrame(loop);
 }
 
-// Boot
+let gateTicker = 0;
+
+async function loop(){
+  // resize when needed (format auto rotation, res changes, viewport changes)
+  const mode = chosenMode();
+  const key = [
+    mode,
+    ui.format.value,
+    ui.s_res.value,
+    (window.visualViewport?.width||0),
+    (window.visualViewport?.height||0),
+    video.videoWidth, video.videoHeight
+  ].join('|');
+
+  if (key !== lastKey){
+    lastKey = key;
+    resizeAll();
+  }
+
+  // 1) camera -> frame cropped
+  fctx.setTransform(1,0,0,1,0,0);
+  fctx.imageSmoothingEnabled = true;
+  drawVideoCoverTo(fctx, frame.width, frame.height);
+
+  // 2) gate update (not every frame)
+  gateTicker++;
+  if (gateTicker % 8 === 0) await updateGate();
+
+  // 3) compute motion blobs & draw if gated
+  if (gateLast){
+    const pts = computeBlobPoints();
+    drawBlobsAndLines(pts);
+  }
+
+  // 4) bloom + ps2 haze overlays (toggles)
+  const bloomAmt = parseInt(ui.s_bloom.value,10)/100;
+  if (ui.t_bloom.checked && bloomAmt > 0.01) applyBloom(bloomAmt);
+  if (ui.t_ps2.checked) applyPS2Haze();
+
+  // 5) push to screen (letterbox contain)
+  drawFrameToScreen();
+
+  requestAnimationFrame(loop);
+}
+
+/* -------- events -------- */
+ui.hud.addEventListener('click', () => setHudHidden(!hudHidden));
+showHudBtn.addEventListener('click', () => setHudHidden(false));
+
+ui.snap.addEventListener('click', snapPhoto);
+
+ui.rec.addEventListener('click', () => {
+  if (!isRecording) startRecording();
+  else stopRecording();
+});
+
+ui.flip.addEventListener('click', async () => {
+  facingMode = (facingMode === "environment") ? "user" : "environment";
+  await startCamera();
+});
+
+ui.format.addEventListener('change', () => { lastKey=""; resizeAll(); });
+ui.ink.addEventListener('change', () => { /* immediate */ });
+ui.s_res.addEventListener('input', () => { lastKey=""; resizeAll(); });
+
+// iOS viewport changes
+if (window.visualViewport){
+  window.visualViewport.addEventListener('resize', () => { lastKey=""; resizeAll(); });
+  window.visualViewport.addEventListener('scroll', () => { lastKey=""; resizeAll(); });
+}
+window.addEventListener('orientationchange', () => { lastKey=""; resizeAll(); });
+window.addEventListener('resize', () => { lastKey=""; resizeAll(); });
+
+/* -------- boot -------- */
 (async () => {
   try{
+    ui.tip.innerHTML = `AUTO flips with rotation • REC saves true crop • Gate: ${faceDetector ? "FaceDetector" : "fallback"}`;
     await startCamera();
   }catch(err){
     document.body.innerHTML = `
