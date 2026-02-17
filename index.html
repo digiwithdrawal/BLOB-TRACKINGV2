@@ -2,94 +2,94 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>BlobTrack Cam V2</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="top">
-    <div class="brand">
-      <div class="dot"></div>
-      <div>
-        <div class="title">BLOBTRACK CAM V2</div>
-        <div class="sub">BLOBS • TRACK • BLOOM • VIDEO</div>
+  <main class="app">
+    <video id="vid" autoplay playsinline muted></video>
+    <canvas id="screen"></canvas>
+
+    <header class="top">
+      <div class="brand">
+        <div class="accent"></div>
+        <div class="brandText">
+          <div class="brandTitle">BLOBTRACK CAM V2</div>
+          <div class="brandSub">BLOBS • LINES • REC+PHOTO</div>
+        </div>
       </div>
-    </div>
-    <div class="topBtns">
-      <button id="flip" class="btn">Flip</button>
-    </div>
-  </header>
+      <button id="flip" class="btn glass">FLIP</button>
+    </header>
 
-  <main class="stage">
-    <video id="v" autoplay playsinline muted></video>
-    <canvas id="c"></canvas>
+    <!-- floating show hud -->
+    <button id="showHud" class="floatHud" aria-label="Show controls">SHOW HUD</button>
 
-    <div class="hud">
-      <div class="row">
-        <button id="rec" class="btn primary">REC</button>
+    <section class="panel" id="panel">
+      <div class="row tight">
+        <div class="pill">
+          <div class="pillLabel">Format</div>
+          <select id="format">
+            <option value="auto" selected>AUTO</option>
+            <option value="portrait">PORTRAIT</option>
+            <option value="landscape">LANDSCAPE 16:9</option>
+            <option value="square">SQUARE 1:1</option>
+          </select>
+        </div>
+
+        <div class="pill">
+          <div class="pillLabel">Color</div>
+          <select id="ink">
+            <option value="white" selected>WHITE</option>
+            <option value="ice">LIGHT BLUE</option>
+            <option value="neon">NEON GREEN</option>
+            <option value="red">RED</option>
+            <option value="yellow">YELLOW</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="togGrid">
+        <label class="tog"><input type="checkbox" id="t_lines" checked><span>Lines</span></label>
+        <label class="tog"><input type="checkbox" id="t_blobs" checked><span>Blobs</span></label>
+        <label class="tog"><input type="checkbox" id="t_bloom" checked><span>Bloom</span></label>
+        <label class="tog"><input type="checkbox" id="t_ps2" checked><span>PS2 Haze</span></label>
+        <label class="tog wide"><input type="checkbox" id="t_gate"><span>Face/Person Gate</span></label>
+      </div>
+
+      <div class="sliders">
+        <div class="srow">
+          <div class="slabel">AMOUNT</div>
+          <input id="s_amount" type="range" min="10" max="220" value="110">
+        </div>
+        <div class="srow">
+          <div class="slabel">SENS</div>
+          <input id="s_sens" type="range" min="0" max="100" value="45">
+        </div>
+        <div class="srow">
+          <div class="slabel">LINES</div>
+          <input id="s_link" type="range" min="10" max="240" value="120">
+        </div>
+        <div class="srow">
+          <div class="slabel">BLOOM</div>
+          <input id="s_bloom" type="range" min="0" max="100" value="55">
+        </div>
+        <div class="srow">
+          <div class="slabel">RES</div>
+          <input id="s_res" type="range" min="220" max="1280" value="720">
+        </div>
+      </div>
+
+      <div class="actions">
         <button id="snap" class="btn">SNAP</button>
-        <button id="reset" class="btn">Reset</button>
+        <button id="rec" class="btn primary">REC</button>
+        <button id="hud" class="btn">HIDE HUD</button>
       </div>
 
-      <div class="panel">
-        <div class="row tight">
-          <label class="tog"><input id="t_boxes" type="checkbox" checked /><span>Boxes</span></label>
-          <label class="tog"><input id="t_coords" type="checkbox" checked /><span>Coords</span></label>
-          <label class="tog"><input id="t_lines" type="checkbox" checked /><span>Lines</span></label>
-          <label class="tog"><input id="t_trails" type="checkbox" /><span>Trails</span></label>
-        </div>
-
-        <div class="row tight">
-          <label class="tog"><input id="t_bloom" type="checkbox" checked /><span>Bloom</span></label>
-          <label class="tog"><input id="t_face" type="checkbox" /><span>Face Gate</span></label>
-        </div>
-
-        <div class="row tight">
-          <div class="pill">
-            <div class="pillLabel">Color</div>
-            <select id="color">
-              <option value="white" selected>White</option>
-              <option value="blue">Light Blue</option>
-              <option value="green">Neon Green</option>
-              <option value="red">Red</option>
-              <option value="yellow">Yellow</option>
-            </select>
-          </div>
-
-          <div class="pill">
-            <div class="pillLabel">Format</div>
-            <select id="format">
-              <option value="portrait" selected>Portrait</option>
-              <option value="landscape">Landscape</option>
-              <option value="square">Square</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="sliders">
-          <div class="srow">
-            <div class="slabel">Amount</div>
-            <input id="amount" type="range" min="0" max="100" value="65" />
-          </div>
-          <div class="srow">
-            <div class="slabel">Threshold</div>
-            <input id="thresh" type="range" min="0" max="100" value="55" />
-          </div>
-          <div class="srow">
-            <div class="slabel">Scale</div>
-            <input id="scale" type="range" min="160" max="540" value="260" />
-          </div>
-          <div class="srow">
-            <div class="slabel">Bloom</div>
-            <input id="bloom" type="range" min="0" max="100" value="35" />
-          </div>
-        </div>
-
-        <div class="tip" id="tip">
-          Format changes the actual render (snap/rec match). Face Gate uses FaceDetector when available.
-        </div>
-      </div>
-    </div>
+      <div class="tip" id="tip">AUTO flips with rotation • REC records the true crop.</div>
+    </section>
   </main>
 
   <script src="app.js"></script>
